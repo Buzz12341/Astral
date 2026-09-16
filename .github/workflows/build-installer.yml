@@ -1,0 +1,109 @@
+name: Build Astral Voice Changer Installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Expand source package
+        shell: powershell
+        run: |
+          Expand-Archive -LiteralPath "AstralVoiceChanger_1.0.0_INSTALLER_BUILDER.zip" -DestinationPath buildsrc -Force
+          Get-ChildItem buildsrc
+
+      - name: Setup Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: "buildsrc/AstralVoiceChanger_1.0.0_FINAL/requirements.txt"
+
+      - name: Install Python dependencies
+        working-directory: buildsrc/AstralVoiceChanger_1.0.0_FINAL
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      - name: Run release tests
+        working-directory: buildsrc/AstralVoiceChanger_1.0.0_FINAL
+        run: python -m pytest -q tests
+
+      - name: Compile Python sources
+        working-directory: buildsrc/AstralVoiceChanger_1.0.0_FINAL
+        run: python -m compileall -q astral_voice main.py target_selfcheck.py benchmark_dsp.py diagnose_audio.py
+
+      - name: Build application EXE
+        working-directory: buildsrc/AstralVoiceChanger_1.0.0_FINAL
+        shell: cmd
+        run: >-
+          python -m PyInstaller --noconfirm --clean --noupx --onefile --windowed
+          --collect-all sounddevice
+          --version-file version_info.txt
+          --manifest windows.manifest
+          --icon assets\AstralVoice.ico
+          --add-data "assets\AstralVoice.ico;assets"
+          --name AstralVoiceChanger main.py
+
+      - name: Verify application EXE exists
+        working-directory: buildsrc/AstralVoiceChanger_1.0.0_FINAL
+        shell: powershell
+        run: |
+          if (!(Test-Path "dist/AstralVoiceChanger.exe")) { throw "AstralVoiceChanger.exe missing" }
+          $hash = Get-FileHash "dist/AstralVoiceChanger.exe" -Algorithm SHA256
+          $hash | Format-List | Out-File "dist/AstralVoiceChanger.exe.sha256.txt"
+          Get-Item "dist/AstralVoiceChanger.exe" | Format-List Name,Length,LastWriteTime
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer EXE
+        working-directory: buildsrc/AstralVoiceChanger_1.0.0_FINAL
+        shell: powershell
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { $iscc = "$env:ProgramFiles\Inno Setup 6\ISCC.exe" }
+          if (!(Test-Path $iscc)) { throw "ISCC.exe not found" }
+          & $iscc "installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path "installer_output/AstralVoiceChanger_1.0.0_Setup.exe")) { throw "Installer missing" }
+          $hash = Get-FileHash "installer_output/AstralVoiceChanger_1.0.0_Setup.exe" -Algorithm SHA256
+          "$($hash.Hash)  AstralVoiceChanger_1.0.0_Setup.exe" | Out-File -Encoding ascii "installer_output/AstralVoiceChanger_1.0.0_Setup.sha256"
+          Get-Item "installer_output/AstralVoiceChanger_1.0.0_Setup.exe" | Format-List Name,Length,LastWriteTime
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstralVoiceChanger-1.0.0-Windows-Installer
+          path: |
+            buildsrc/AstralVoiceChanger_1.0.0_FINAL/installer_output/AstralVoiceChanger_1.0.0_Setup.exe
+            buildsrc/AstralVoiceChanger_1.0.0_FINAL/installer_output/AstralVoiceChanger_1.0.0_Setup.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload portable EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstralVoiceChanger-1.0.0-Portable
+          path: |
+            buildsrc/AstralVoiceChanger_1.0.0_FINAL/dist/AstralVoiceChanger.exe
+            buildsrc/AstralVoiceChanger_1.0.0_FINAL/dist/AstralVoiceChanger.exe.sha256.txt
+          if-no-files-found: error
+          retention-days: 7
