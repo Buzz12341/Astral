@@ -12,6 +12,7 @@ permissions:
 
 env:
   PYTHONUTF8: "1"
+  SOURCE_URL: "https://96ef51ea-ee40-4e02-b882-9304dfd3ea26.sandbox.floot.app/_cdn/static/2968b7ac-1075-47ac-a4ba-73e7d555b806-AstralVoiceChanger_1.0.0_INSTALLER_BUILDER.zip"
 
 jobs:
   build-windows-installer:
@@ -22,10 +23,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Expand source package
+      - name: Download and expand verified source package
         shell: powershell
         run: |
-          Expand-Archive -LiteralPath "AstralVoiceChanger_1.0.0_INSTALLER_BUILDER.zip" -DestinationPath buildsrc -Force
+          Invoke-WebRequest -Uri "$env:SOURCE_URL" -OutFile "source.zip"
+          $len = (Get-Item "source.zip").Length
+          if ($len -ne 87409) { throw "Unexpected source package size: $len" }
+          Expand-Archive -LiteralPath "source.zip" -DestinationPath buildsrc -Force
+          if (!(Test-Path "buildsrc/AstralVoiceChanger_1.0.0_FINAL/main.py")) { throw "Source package layout invalid" }
           Get-ChildItem buildsrc
 
       - name: Setup Python 3.11 x64
@@ -69,7 +74,7 @@ jobs:
         run: |
           if (!(Test-Path "dist/AstralVoiceChanger.exe")) { throw "AstralVoiceChanger.exe missing" }
           $hash = Get-FileHash "dist/AstralVoiceChanger.exe" -Algorithm SHA256
-          $hash | Format-List | Out-File "dist/AstralVoiceChanger.exe.sha256.txt"
+          "$($hash.Hash)  AstralVoiceChanger.exe" | Out-File -Encoding ascii "dist/AstralVoiceChanger.exe.sha256.txt"
           Get-Item "dist/AstralVoiceChanger.exe" | Format-List Name,Length,LastWriteTime
 
       - name: Install Inno Setup
